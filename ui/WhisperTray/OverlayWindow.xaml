@@ -317,6 +317,7 @@
                                       SelectionChanged="Settings_SelectionChanged" />
                             <Button x:Name="MicrophoneTestButton"
                                     Grid.Column="1"
+                                    Width="76"
                                     Margin="8,0,0,0"
                                     Content="Проверить"
                                     Style="{StaticResource SecondaryButtonStyle}"

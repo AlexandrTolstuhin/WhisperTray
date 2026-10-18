@@ -12,6 +12,8 @@ public partial class OverlayWindow : Window
 {
     private readonly AppPaths paths;
     private readonly UserSettings settings;
+    private readonly MMDeviceEnumerator audioDeviceEnumerator;
+    private readonly MMDeviceNotificationClient audioDeviceNotifications;
     private readonly DispatcherTimer microphoneTestTimer;
     private readonly DispatcherTimer statusTimer;
     private RecordingSession? recording;
@@ -30,6 +32,18 @@ public partial class OverlayWindow : Window
         InitializeComponent();
         this.paths = paths;
         settings = UserSettings.Load();
+        audioDeviceEnumerator = new MMDeviceEnumerator();
+        audioDeviceNotifications = audioDeviceEnumerator.CreateNotificationClient();
+        audioDeviceNotifications.DeviceAdded += (_, _) => RefreshAudioInputs();
+        audioDeviceNotifications.DeviceRemoved += (_, _) => RefreshAudioInputs();
+        audioDeviceNotifications.DeviceStateChanged += (_, _) => RefreshAudioInputs();
+        audioDeviceNotifications.DefaultDeviceChanged += (_, args) =>
+        {
+            if (args.Flow == DataFlow.Capture)
+            {
+                RefreshAudioInputs();
+            }
+        };
         microphoneTestTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Background, MicrophoneTestTimer_Tick, Dispatcher);
         microphoneTestTimer.Stop();
         statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(8) };
@@ -38,9 +52,7 @@ public partial class OverlayWindow : Window
         ModelComboBox.ItemsSource = WhisperModels.All;
         ModelComboBox.SelectedItem = WhisperModels.Find(settings.ModelId);
 
-        var inputs = GetAudioInputs();
-        InputComboBox.ItemsSource = inputs;
-        InputComboBox.SelectedItem = inputs.FirstOrDefault(input => input.Id == settings.InputDeviceId) ?? inputs[0];
+        RefreshAudioInputs();
         AutostartCheckBox.IsChecked = StartupRegistration.IsEnabled;
         initializing = false;
     }
@@ -70,6 +82,8 @@ public partial class OverlayWindow : Window
             await StopAndTranscribeAsync();
         }
 
+        audioDeviceNotifications.Dispose();
+        audioDeviceEnumerator.Dispose();
         allowClose = true;
         Close();
     }
@@ -379,15 +393,26 @@ public partial class OverlayWindow : Window
         StatusText.Text = "Локальная транскрибация";
     }
 
-    private static IReadOnlyList<AudioInputOption> GetAudioInputs()
+    private void RefreshAudioInputs()
     {
-        using var enumerator = new MMDeviceEnumerator();
-        using var defaultDevice = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Multimedia);
-        using var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
-        var inputs = new List<AudioInputOption>
+        var inputs = GetAudioInputs();
+        var wasInitializing = initializing;
+        initializing = true;
+        InputComboBox.ItemsSource = inputs;
+        InputComboBox.SelectedItem = inputs.FirstOrDefault(input => input.Id == settings.InputDeviceId) ?? inputs[0];
+        initializing = wasInitializing;
+    }
+
+    private IReadOnlyList<AudioInputOption> GetAudioInputs()
+    {
+        using var defaultDevice = audioDeviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Multimedia);
+        using var devices = audioDeviceEnumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
+        var inputs = new List<AudioInputOption>();
+
+        if (defaultDevice.State.HasFlag(DeviceState.Active))
         {
-            new(null, $"По умолчанию · {defaultDevice.FriendlyName}")
-        };
+            inputs.Add(new AudioInputOption(null, $"По умолчанию · {defaultDevice.FriendlyName}"));
+        }
 
         foreach (var device in devices)
         {
