@@ -1,0 +1,17 @@
+.idea/
+.serena/
+.vs/
+.tmp/
+
+**/bin/
+**/obj/
+TestResults/
+
+*.user
+*.suo
+*.trx
+
+models/*
+!models/.gitkeep
+transcriptions/*
+!transcriptions/.gitkeep

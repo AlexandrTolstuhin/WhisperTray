@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="whisper/WhisperEngine/WhisperEngine.csproj" />
+  <Project Path="ui/WhisperTray/WhisperTray.csproj" />
+  <Project Path="tests/WhisperEngine.Tests/WhisperEngine.Tests.csproj" />
+</Solution>
+
