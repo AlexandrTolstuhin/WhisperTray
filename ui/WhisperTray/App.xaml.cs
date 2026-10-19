@@ -16,6 +16,7 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        _ = StartupRegistration.TryMigrateLegacyRegistration();
 
         var paths = AppPaths.Discover(AppContext.BaseDirectory);
         overlay = new OverlayWindow(paths);

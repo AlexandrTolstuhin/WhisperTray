@@ -6,6 +6,7 @@
 **/bin/
 **/obj/
 TestResults/
+/release/
 
 *.user
 *.suo

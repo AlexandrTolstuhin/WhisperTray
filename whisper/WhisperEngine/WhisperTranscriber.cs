@@ -5,30 +5,52 @@ namespace WhisperEngine;
 
 public sealed class WhisperTranscriber(string modelsDirectory, WhisperModel model)
 {
+    private const string VadModelFileName = "ggml-silero-v6.2.0.bin";
     private readonly string modelPath = Path.Combine(modelsDirectory, model.FileName);
+    private readonly string vadModelPath = Path.Combine(modelsDirectory, VadModelFileName);
 
-    public bool IsModelReady => File.Exists(modelPath);
+    public bool IsModelReady => File.Exists(modelPath) && File.Exists(vadModelPath);
 
     public async Task EnsureModelAsync(CancellationToken cancellationToken = default)
     {
-        if (IsModelReady)
+        Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
+
+        if (!File.Exists(modelPath))
         {
-            return;
+            await DownloadAsync(
+                modelPath,
+                () => WhisperGgmlDownloader.Default.GetGgmlModelAsync(model.GgmlType),
+                cancellationToken);
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
-        var downloadPath = modelPath + ".download";
+        if (!File.Exists(vadModelPath))
+        {
+            await DownloadAsync(
+                vadModelPath,
+                () => WhisperGgmlDownloader.Default.GetGgmlSileroVadModelAsync(
+                    SileroVadType.V6_2_0,
+                    cancellationToken),
+                cancellationToken);
+        }
+    }
+
+    private static async Task DownloadAsync(
+        string destinationPath,
+        Func<Task<Stream>> download,
+        CancellationToken cancellationToken)
+    {
+        var downloadPath = destinationPath + ".download";
 
         try
         {
-            await using var modelStream = await WhisperGgmlDownloader.Default.GetGgmlModelAsync(model.GgmlType);
+            await using var modelStream = await download();
             await using (var output = File.Create(downloadPath))
             {
                 await modelStream.CopyToAsync(output, cancellationToken);
                 await output.FlushAsync(cancellationToken);
             }
 
-            File.Move(downloadPath, modelPath, true);
+            File.Move(downloadPath, destinationPath, true);
         }
         catch
         {
@@ -49,19 +71,40 @@ public sealed class WhisperTranscriber(string modelsDirectory, WhisperModel mode
     public async Task<WhisperTranscriptionSession> CreateSessionAsync(CancellationToken cancellationToken = default)
     {
         await EnsureModelAsync(cancellationToken);
-        return new WhisperTranscriptionSession(WhisperFactory.FromPath(modelPath));
+        return new WhisperTranscriptionSession(
+            WhisperFactory.FromPath(modelPath),
+            WhisperVadFactory.FromPath(vadModelPath));
     }
 }
 
-public sealed class WhisperTranscriptionSession(WhisperFactory factory) : IAsyncDisposable
+public sealed class WhisperTranscriptionSession(
+    WhisperFactory factory,
+    WhisperVadFactory vadFactory) : IAsyncDisposable
 {
+    private readonly WhisperVadProcessor vadProcessor = vadFactory.CreateBuilder()
+        .WithUseGpu(false)
+        .Build();
+
     public async Task<IReadOnlyList<TranscriptSegment>> TranscribeAsync(
         Stream audio,
         CancellationToken cancellationToken = default)
     {
-        if (audio.CanSeek && audio.Length < 32044)
+        if (!audio.CanSeek)
+        {
+            throw new InvalidOperationException("Audio stream must be seekable.");
+        }
+
+        if (audio.Length < 32044)
         {
             throw new InvalidOperationException("Recording contains less than one second of audio.");
+        }
+
+        var speech = await vadProcessor.DetectSpeechAsync(audio, cancellationToken);
+        audio.Position = 0;
+
+        if (speech.Count == 0)
+        {
+            return [];
         }
 
         using var processor = factory.CreateBuilder()
@@ -78,6 +121,8 @@ public sealed class WhisperTranscriptionSession(WhisperFactory factory) : IAsync
 
     public ValueTask DisposeAsync()
     {
+        vadProcessor.Dispose();
+        vadFactory.Dispose();
         factory.Dispose();
         return ValueTask.CompletedTask;
     }
